@@ -10,6 +10,17 @@ import colorsys
 #  CONFIG / GLOBAL STATE
 # ============================================================
 
+# ---- Whipped Cream System ----
+whipped_creams = []
+CREAM_SPEED = 8
+CREAM_SIZE = 20
+
+# ---- Notification System ----
+notif_text = ""
+notif_color = (0.9, 0.7, 0.2)
+notif_timer = 0
+NOTIF_DURATION = 50
+
 WINDOW_W, WINDOW_H = 1000, 800
 GRID_LENGTH = 200
 FOVY = 90
@@ -17,9 +28,11 @@ FOVY = 90
 camera_orbit_angle = 90.0
 camera_height = 500
 CAMERA_RADIUS = 650
-ORBIT_SPEED = 3
-HEIGHT_SPEED = 15
+ORBIT_SPEED = 1.5
+HEIGHT_SPEED = 8
 HEIGHT_MIN, HEIGHT_MAX = 200, 900
+STORY_CAMERA_ORBIT = 180.0
+STORY_CAMERA_HEIGHT = 420
 
 _saved_orbit_angle = None
 _saved_height = None
@@ -58,6 +71,26 @@ def new_order():
         "topping": random.choice([None, "cherry", "chocobar"]),
     }
 
+# ---- Game States ----
+STATE_STORY = "story"
+STATE_NORMAL = "normal"
+STATE_ROBBER_CHOICE = "robber_choice"
+STATE_RPS = "rps"
+STATE_CAKE_EATING = "cake_eating"
+STATE_WIN = "win"
+
+# Initial state setup
+game_state = STATE_STORY
+story_step = 0
+
+# Storyline Dialogues
+story_lines = [
+    "Player: Hi! I came to purchase a cake.",
+    "Cashier: That will be 50 coins.",
+    "Player: Oh... but I don't have any money!",
+    "Cashier: You have to work here as punishment!",
+    "Player: Oh no!! Sheng ming jie shule"
+]
 
 current_order = new_order()
 
@@ -76,7 +109,7 @@ order_handoff_timer = 0
 # register and the cake table ----
 PLAYER_REGISTER_POS = (-250.0, 0.0)
 PLAYER_TABLE_POS = (280.0, -20.0)
-PLAYER_SPEED = 2.0
+PLAYER_SPEED = 1.2
 player_x, player_y = PLAYER_REGISTER_POS
 player_target_x, player_target_y = PLAYER_REGISTER_POS
 
@@ -93,17 +126,17 @@ message_value = None
 message_timer = 0
 
 # ---- coins scattered on the floor ----
-coins = []  # each: {"x":.., "y":..}
-pending_coin_respawns = []  # each: {"timer": frames_left}
-MAX_COINS = 8
-COIN_RESPAWN_DELAY = 100  # frames (~a couple of seconds) before a picked coin returns
+COIN_COUNT = 5
+COIN_BODY_R = 30
+coins = []
+animation_tick = 0
 frame_count = 0
 
 # ---- robber event ----
 robber_timer = 0
 ROBBER_TIME_LIMIT = 3000  # frames, ~ a few seconds of idle() calls
-ROBBER_SPAWN_INTERVAL = 30  # larger value = robber appears less often
-ROBBER_SPAWN_CHANCE = 0.01   # chance per interval
+ROBBER_SPAWN_INTERVAL = 20  # smaller value = robber appears more often
+ROBBER_SPAWN_CHANCE = 0.02   # chance per interval
 
 # ---- rock paper scissors ----
 RPS_OPTIONS = ["rock", "paper", "scissors"]
@@ -138,34 +171,39 @@ POLICE_COLOR = (0.05, 0.35, 0.18)     # dark green
 # ---- customer queue (visual only — order logic still lives in current_order) ----
 QUEUE_SLOTS_X = [-280, -450, -620, -790]
 QUEUE_Y = -280
-CUSTOMER_SPEED = 2
+CUSTOMER_SPEED = 1.2
 customer_queue = []      # list of {"x","y","target_x","target_y","color"}
 leaving_customers = []   # customers walking out through the exit door
 
-# ---- robber / police stage positions & entrance-exit animation (still use
-# the entrance door on the left) ----
-ROBBER_STAND_X = 320
-POLICE_STAND_X = 160
-robber_x = DOOR_X
-robber_target_x = DOOR_X
+# ---- robber / police stage positions & entrance-exit animation ----
+# Match the customer exit route through the front door, using the same
+# Y-axis movement and off-screen removal as the customer exit logic.
+ROBBER_STAND_Y = -100
+POLICE_STAND_Y = 0
+robber_x = EXIT_DOOR_X
+robber_y = EXIT_DOOR_Y + 80
+robber_target_x = EXIT_DOOR_X
+robber_target_y = EXIT_DOOR_Y + 80
 robber_visible = False
-police_x = DOOR_X
-police_target_x = DOOR_X
+police_x = EXIT_DOOR_X
+police_y = EXIT_DOOR_Y + 80
+police_target_x = EXIT_DOOR_X
+police_target_y = EXIT_DOOR_Y + 80
 police_visible = False
 police_visit_timer = 0
 
-# ---- random chatter / order notifications (custom quad font, no glutBitmapCharacter) ----
+# ---- random chatter / order notifications  ----
 notif_text = None
 notif_color = (1, 1, 1)
 notif_timer = 0
 notif_persistent = False  # True while a customer's chatter line should stay up indefinitely
-NOTIF_DURATION = 260
-ORDER_RESULT_DURATION = 240
+NOTIF_DURATION = 50
+ORDER_RESULT_DURATION = 600
 
 CUSTOMER_LINES = [
     "ITS SUCH A SUNNY DAY",
     "THE CAKES LOOK DELICIOUS",
-    "GOOD MORNING",
+    "GOOD MORNING!",
     "I AM GETTING MARRIED",
     "TODAY IS MY BIRTHDAY",
     "I AM TURNING 40 TODAY",
@@ -175,6 +213,7 @@ CUSTOMER_LINES = [
     "WO SHI BAOBEI",
     "FANG YILUN IS THE MOST BEAUTIFUL",
     "I hope the cakes are fresh"
+    "I love icecream cake"
 ]
 
 ROBBER_LINES = [
@@ -184,7 +223,6 @@ ROBBER_LINES = [
     "AIN'T I THE PRETTIEST? GIVE YOUR EVERYTHING TO ME PLEASE?",
     "You earn so much money. Please give me some?"
 ]
-
 
 # ============================================================
 #  DRAWING HELPERS
@@ -442,19 +480,46 @@ def draw_floor():
     glEnd()
 
 
-def draw_coins():
-    glColor3f(1.0, 0.85, 0.1)
-    for c in coins:
+# ============================================================
+#  COIN SPAWNING & CLICKING
+# ============================================================
+
+def random_coin_position():
+    """Generates a random position on the floor."""
+    x = random.uniform(ROOM_LEFT + 200, ROOM_RIGHT - 200)
+    y = random.uniform(ROOM_FRONT + 200, ROOM_BACK - 200)
+    return [x, y, 30.0]
+
+
+def coin_center(c):
+    """Return a coin's x/y center regardless of whether it stores pos or x/y."""
+    if "pos" in c:
+        return c["pos"][0], c["pos"][1]
+    return c.get("x", 0.0), c.get("y", 0.0)
+
+
+def init_coins():
+    global coins
+    coins = [{"pos": random_coin_position()} for _ in range(COIN_COUNT)]
+
+
+def draw_coins_3d():
+    """Draws coins pulsing in place."""
+    global animation_tick
+    if paused:
+        return
+    animation_tick += 0.2
+    for idx, c in enumerate(coins):
+        if "pos" not in c and "x" in c and "y" in c:
+            c["pos"] = [c["x"], c["y"], 30.0]
+        x, y = coin_center(c)
+        pulse = 1.0 + 0.25 * math.sin(animation_tick * 0.08 + idx)
         glPushMatrix()
-        glTranslatef(c["x"], c["y"], 14)
-        gluSphere(gluNewQuadric(), 10, 8, 8)
+        glTranslatef(x, y, COIN_BODY_R * pulse)
+        glColor3f(1.0, 0.85, 0.1)
+        gluSphere(gluNewQuadric(), COIN_BODY_R * pulse, 12, 12)
         glPopMatrix()
-    if coins:
-        glPointSize(4)
-        glBegin(GL_POINTS)
-        for c in coins:
-            glVertex3f(c["x"], c["y"], 30)
-        glEnd()
+
 
 
 # ============================================================
@@ -639,8 +704,7 @@ def icon_star_hud(cx, cy, r_out=24, r_in=10, color=(1.0, 0.85, 0.1)):
     glEnd()
 
 
-# ---- custom dot-matrix font for the notification tile (still no
-# glutBitmapCharacter / glRasterPos2f — every letter is a 5x7 grid of
+# ---- custom dot-matrix font for the notification tile 
 # GL_QUADS rectangles). Text is always shown upper-case. ----
 
 _FONT_5X7 = {
@@ -943,6 +1007,57 @@ def check_milestones():
         set_message("milestone", next_milestone, 180)
         next_milestone += 150
 
+# ============================================================
+#  WHIPPED CREAM PROJECTILES
+# ============================================================
+
+def throw_whipped_cream():
+    """Spawns an arcing whipped-cream projectile from the player's cake."""
+    if game_state != STATE_CAKE_EATING or paused:
+        return
+    start_x, start_y, start_z = -180, -100, 40
+    target_x, target_y, target_z = 180, -100, 40
+    dx = target_x - start_x
+    dy = target_y - start_y
+    angle = math.degrees(math.atan2(dy, dx))
+    whipped_creams.append({
+        'pos': [start_x, start_y, start_z],
+        'vx': 3.3,
+        'vy': -9.0,
+        'gravity': 0.28,
+        'angle': angle,
+        'speed': 18,
+        'target': [target_x, target_y, target_z],
+    })
+
+
+def update_whipped_creams():
+    """Moves cream projectiles in an arc upward then down to the robber cake."""
+    global robber_cake_amt
+    remaining = []
+    for wc in whipped_creams:
+        wc['pos'][0] += wc['vx']
+        wc['pos'][1] += wc['vy']
+        wc['vy'] += wc['gravity']
+
+        if math.hypot(wc['pos'][0] - 180, wc['pos'][1] + 100) < 60:
+            robber_cake_amt = min(160, robber_cake_amt + 8)
+            continue
+
+        if wc['pos'][0] < 220 and wc['pos'][1] > -260 and wc['pos'][1] < 140:
+            remaining.append(wc)
+    whipped_creams[:] = remaining
+
+
+def draw_whipped_creams():
+    """Renders all active whipped cream projectiles as 3D cubes."""
+    glColor3f(1.0, 0.98, 0.95)
+    for wc in whipped_creams:
+        glPushMatrix()
+        glTranslatef(wc['pos'][0], wc['pos'][1], wc['pos'][2])
+        glutSolidCube(CREAM_SIZE)
+        glPopMatrix()
+
 
 # ---- notifications (random chatter / order details, custom quad font) ----
 
@@ -957,7 +1072,7 @@ def show_notification(kind):
         notif_text = random.choice(ROBBER_LINES)
         notif_color = (0.75, 0.55, 0.9)
         notif_persistent = False
-        notif_timer = NOTIF_DURATION
+        notif_timer = NOTIF_DURATION +  500
     elif kind == "order_result_success":
         notif_text = "ORDER DELIVERED SUCCESSFULLY"
         notif_color = (0.2, 0.8, 0.35)
@@ -973,7 +1088,7 @@ def show_notification(kind):
 def resume_customer_chatter():
     """Called after a robber encounter ends — if the player was still in
     the middle of taking an order, put the chatter line back up."""
-    if order_stage == "taking":
+    if order_stage == "taking" and game_state == STATE_NORMAL:
         show_notification("customer_line")
 
 
@@ -983,6 +1098,13 @@ def _lerp_toward(current, target, speed):
     if current > target:
         return max(target, current - speed)
     return current
+
+def show_custom_notification(text, color=(0.9, 0.7, 0.2)):
+    """Sets an active notification text with a custom RGB color and timer."""
+    global notif_text, notif_color, notif_timer
+    notif_text = text
+    notif_color = color
+    notif_timer = NOTIF_DURATION
 
 
 # ---- customer queue: purely visual — current_order still drives the
@@ -1036,43 +1158,49 @@ def update_customers():
             leaving_customers.remove(c)
 
 
-# ---- robber / police entrance-exit animation through the entrance door ----
+# ---- robber / police entrance-exit animation through the exit door ----
 
 def robber_enter():
-    global robber_visible, robber_x, robber_target_x
+    global robber_visible, robber_x, robber_y, robber_target_x, robber_target_y
     robber_visible = True
-    robber_x = DOOR_X - 60
-    robber_target_x = ROBBER_STAND_X
+    robber_x = EXIT_DOOR_X
+    robber_y = EXIT_DOOR_Y + 50
+    robber_target_x = EXIT_DOOR_X
+    robber_target_y = ROBBER_STAND_Y
 
 
 def robber_leave():
-    global robber_target_x
-    robber_target_x = DOOR_X - 60
+    global robber_target_y
+    robber_target_y = EXIT_DOOR_Y - 120
 
 
 def police_enter():
-    global police_visible, police_x, police_target_x, police_visit_timer
+    global police_visible, police_x, police_y, police_target_x, police_target_y, police_visit_timer
     police_visible = True
-    police_x = DOOR_X - 60
-    police_target_x = POLICE_STAND_X
-    police_visit_timer = 90
+    police_x = EXIT_DOOR_X
+    police_y = EXIT_DOOR_Y + 50
+    police_target_x = EXIT_DOOR_X
+    police_target_y = POLICE_STAND_Y
+    police_visit_timer = 500
 
 
 def update_actors():
     global robber_visible, police_visible, police_visit_timer
-    global robber_x, police_x, police_target_x
+    global robber_x, robber_y, police_x, police_y, robber_target_y, police_target_y
 
-    robber_x = _lerp_toward(robber_x, robber_target_x, 14)
-    if robber_visible and robber_target_x <= DOOR_X - 55 and robber_x <= DOOR_X - 55:
+    robber_x = _lerp_toward(robber_x, robber_target_x, 1.5)
+    robber_y = _lerp_toward(robber_y, robber_target_y, 2.5)
+    if robber_visible and robber_target_y <= EXIT_DOOR_Y - 80 and robber_y <= EXIT_DOOR_Y - 80:
         robber_visible = False
 
     if police_visible:
-        police_x = _lerp_toward(police_x, police_target_x, 14)
+        police_x = _lerp_toward(police_x, police_target_x, 1.5)
+        police_y = _lerp_toward(police_y, police_target_y, 14)
         if police_visit_timer > 0:
             police_visit_timer -= 1
         else:
-            police_target_x = DOOR_X - 60
-            if police_x <= DOOR_X - 55:
+            police_target_y = EXIT_DOOR_Y - 120
+            if police_y <= EXIT_DOOR_Y - 80:
                 police_visible = False
 
 
@@ -1152,8 +1280,6 @@ def submit_cake():
 
 
 def reset_order():
-    """The 'A' key: refuse the current customer outright. They leave empty
-    -handed through the exit door and a new customer's order begins."""
     global money
     money = max(0, money - 10)
     set_message("refuse", 10)
@@ -1222,7 +1348,7 @@ def start_cake_duel():
     robber_cake_amt = 100.0
     _saved_orbit_angle = camera_orbit_angle
     _saved_height = camera_height
-    camera_orbit_angle = 0.0
+    camera_orbit_angle = 270.0
     camera_height = 260
     # no message needed — the two progress bars are the prompt
 
@@ -1242,6 +1368,51 @@ def end_cake_duel(player_won):
     game_state = STATE_NORMAL
     robber_leave()
     resume_customer_chatter()
+
+def check_coin_click(click_x, click_y):
+    """Raycasts mouse click in screen coordinates to hit 3D coins."""
+    global money, game_state
+    if paused or game_state == STATE_STORY:
+        return False
+
+    viewport = glGetIntegerv(GL_VIEWPORT)
+    modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+    projection = glGetDoublev(GL_PROJECTION_MATRIX)
+    winX = float(click_x)
+    winY = float(viewport[3] - click_y)
+
+    # Calculate ray origin and direction
+    near_point = gluUnProject(winX, winY, 0.0, modelview, projection, viewport)
+    far_point = gluUnProject(winX, winY, 1.0, modelview, projection, viewport)
+    
+    ray_ox, ray_oy, ray_oz = near_point
+    ray_dx = far_point[0] - near_point[0]
+    ray_dy = far_point[1] - near_point[1]
+    ray_dz = far_point[2] - near_point[2]
+
+    # Intersection with Z = 30 plane (Coin height plane)
+    if ray_dz != 0:
+        t = (30.0 - ray_oz) / ray_dz
+        hit_x = ray_ox + t * ray_dx
+        hit_y = ray_oy + t * ray_dy
+
+        for c in coins:
+            if "pos" not in c and "x" in c and "y" in c:
+                c["pos"] = [c["x"], c["y"], 30.0]
+            cx, cy = coin_center(c)
+            dist = math.hypot(hit_x - cx, hit_y - cy)
+            if dist < COIN_BODY_R * 2.5:
+                # Coin clicked! Re-position and grant points
+                money += 1
+                c['pos'] = random_coin_position()
+                show_custom_notification(f"Collected Coin! Total: {money}/{target}", (0.2, 0.8, 0.2))
+                
+                # Check for win target
+                if money >= target:
+                    game_state = STATE_WIN
+                    show_custom_notification("TARGET REACHED! Press 'R' to Restart", (0.1, 0.9, 0.3))
+                return True
+    return False
 
 
 def reset_game():
@@ -1273,6 +1444,7 @@ def reset_game():
 
     coins = []
     pending_coin_respawns = []
+    init_coins()  # <-- ADD THIS LINE
     frame_count = 0
     robber_timer = 0
     game_state = STATE_NORMAL
@@ -1284,11 +1456,15 @@ def reset_game():
     door_anim = 1.0
     exit_door_anim = 1.0
     robber_visible = False
-    robber_x = DOOR_X
-    robber_target_x = DOOR_X
+    robber_x = EXIT_DOOR_X
+    robber_y = EXIT_DOOR_Y + 80
+    robber_target_x = EXIT_DOOR_X
+    robber_target_y = EXIT_DOOR_Y + 80
     police_visible = False
-    police_x = DOOR_X
-    police_target_x = DOOR_X
+    police_x = EXIT_DOOR_X
+    police_y = EXIT_DOOR_Y + 80
+    police_target_x = EXIT_DOOR_X
+    police_target_y = EXIT_DOOR_Y + 80
     police_visit_timer = 0
 
     leaving_customers = []
@@ -1369,7 +1545,18 @@ def keyboardListener(key, x, y):
 
 
 def specialKeyListener(key, x, y):
-    global camera_orbit_angle, camera_height, player_cake_amt, robber_cake_amt
+    global story_step, game_state, camera_orbit_angle, camera_height
+    global player_cake_amt, robber_cake_amt
+
+    if game_state == STATE_STORY:
+        if key == GLUT_KEY_RIGHT:
+            story_step += 1
+            if story_step < len(story_lines):
+                show_custom_notification(story_lines[story_step], (0.9, 0.7, 0.2))
+            else:
+                game_state = STATE_NORMAL
+                show_custom_notification(f"Target set to {target} coins!", (0.2, 0.8, 0.2))
+        return
 
     if game_state == STATE_WIN:
         return
@@ -1390,7 +1577,8 @@ def specialKeyListener(key, x, y):
         if paused:
             camera_height = min(HEIGHT_MAX, camera_height + HEIGHT_SPEED)
         elif game_state == STATE_CAKE_EATING:
-            robber_cake_amt = min(160, robber_cake_amt + 10)
+            robber_cake_amt = min(160, robber_cake_amt + 5)
+            throw_whipped_cream()
         else:
             camera_height = min(HEIGHT_MAX, camera_height + HEIGHT_SPEED)
 
@@ -1398,23 +1586,17 @@ def specialKeyListener(key, x, y):
         if paused:
             camera_height = max(HEIGHT_MIN, camera_height - HEIGHT_SPEED)
         elif game_state == STATE_CAKE_EATING:
-            player_cake_amt = max(0, player_cake_amt - 10)
+            player_cake_amt = max(0, player_cake_amt - 12)
         else:
             camera_height = max(HEIGHT_MIN, camera_height - HEIGHT_SPEED)
 
 
 def mouseListener(button, state, x, y):
     global money
-    if button == GLUT_LEFT_BUTTON and state == GLUT_DOWN and not paused:
-        if coins:
-            # so a click just grabs the coin closest to the counter.
-            coins.sort(key=lambda c: c["y"])
-            coins.pop(0)  # gone immediately — it reappears later, elsewhere
-            money_gain = 5
-            money += money_gain
-            set_message("coin", money_gain, 90)
-            check_milestones()
-            pending_coin_respawns.append({"timer": COIN_RESPAWN_DELAY})
+    if button == GLUT_LEFT_BUTTON and state == GLUT_DOWN:
+        # Check coin click first; throw cream if no coin clicked
+        if not check_coin_click(x, y):
+            throw_whipped_cream()
 
 
 # ============================================================
@@ -1428,10 +1610,17 @@ def setupCamera():
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
 
-    rad = math.radians(camera_orbit_angle)
+    if game_state == STATE_STORY:
+        orbit = STORY_CAMERA_ORBIT
+        height = STORY_CAMERA_HEIGHT
+    else:
+        orbit = camera_orbit_angle
+        height = camera_height
+
+    rad = math.radians(orbit)
     cx = CAMERA_RADIUS * math.cos(rad)
     cy = CAMERA_RADIUS * math.sin(rad) - 200
-    cz = camera_height
+    cz = height
     gluLookAt(cx, cy, cz, 0, -150, 60, 0, 0, 1)
 
 
@@ -1444,12 +1633,18 @@ def idle():
     global player_cake_amt, robber_cake_amt, door_anim, exit_door_anim, notif_timer
     global order_stage, carried_cake, order_handoff_timer
 
-    frame_count += 1
+    frame_count += 0.5
 
     if not paused:
         update_customers()
         update_actors()
         update_player()
+
+        # handle notification duration
+        if notif_timer > 0:
+            notif_timer -= 1
+        elif notif_timer == 0 and game_state != STATE_WIN:
+            notif_text = ""
 
         door_target = 0.0 if game_state == STATE_WIN else 1.0
         door_anim = _lerp_toward(door_anim, door_target, 0.02)
@@ -1459,15 +1654,6 @@ def idle():
             notif_timer -= 1
 
         # coins waiting to reappear somewhere new
-        for entry in pending_coin_respawns[:]:
-            entry["timer"] -= 1
-            if entry["timer"] <= 0:
-                pending_coin_respawns.remove(entry)
-                if len(coins) < MAX_COINS:
-                    coins.append({
-                        "x": random.randint(-450, 450),
-                        "y": random.randint(-400, 150),
-                    })
 
         # the player just delivered the cake to the register: keep a longer
         # pause before the next order begins so the handoff feels intentional.
@@ -1486,11 +1672,8 @@ def idle():
         if game_state == STATE_NORMAL:
             if frame_count % ROBBER_SPAWN_INTERVAL == 0 and random.random() < ROBBER_SPAWN_CHANCE:
                 spawn_robber()
-            if frame_count % 220 == 0 and random.random() < 0.6 and len(coins) < MAX_COINS:
-                coins.append({
-                    "x": random.randint(-450, 450),
-                    "y": random.randint(-400, 150),
-                })
+            if frame_count % 220 == 0 and random.random() < 0.6 and len(coins) < 5:
+                coins.append({"pos": random_coin_position()})
 
         elif game_state == STATE_ROBBER_CHOICE:
             robber_timer -= 1
@@ -1500,13 +1683,14 @@ def idle():
                 resolve_robber_timeout()
 
         elif game_state == STATE_CAKE_EATING:
-            robber_cake_amt -= 0.12
+            robber_cake_amt -= 0.08 
             if random.random() < 0.01:
                 player_cake_amt = min(160, player_cake_amt + 8)
             if player_cake_amt <= 0:
                 end_cake_duel(player_won=True)
             elif robber_cake_amt <= 0:
                 end_cake_duel(player_won=False)
+            update_whipped_creams()
 
         if money >= target and game_state != STATE_WIN:
             game_state = STATE_WIN
@@ -1603,6 +1787,7 @@ def draw_hud():
     if game_state == STATE_WIN:
         icon_star_hud(WINDOW_W / 2, WINDOW_H / 2, r_out=40, r_in=17)
 
+
     _end_2d()
 
 
@@ -1624,17 +1809,19 @@ def showScreen():
     draw_floor()
     draw_environment()
     draw_shop()
-    draw_coins()
+    if game_state != STATE_STORY and not paused:
+        draw_coins_3d()
 
     # the player shuttles between the register and the cake table, wearing pink
-    draw_person(player_x, player_y, PLAYER_COLOR)
+    if game_state != STATE_CAKE_EATING: 
+        draw_person(player_x, player_y, PLAYER_COLOR)
     if carried_cake is not None:
         draw_cake(carried_cake["shape"], carried_cake["flavor"], carried_cake["tiers"],
                    carried_cake["topping"], player_x, player_y - 25, base_size=26, z_offset=115)
 
     # customer queue: several pastel-coloured customers lined up, entering
     # through the left door and (once served) leaving through the front door
-    if game_state in (STATE_NORMAL,):
+    if game_state in (STATE_NORMAL, STATE_STORY):
         for c in customer_queue:
             draw_person(c["x"], c.get("y", QUEUE_Y), c["color"])
     for c in leaving_customers:
@@ -1644,13 +1831,14 @@ def showScreen():
             draw_cake(cake["shape"], cake["flavor"], cake["tiers"], cake["topping"],
                        c["x"], c.get("y", QUEUE_Y) - 25, base_size=26, z_offset=115)
 
-    # robber (violet) and police (dark green), animated in/out through the entrance door
+    # robber (violet) and police (dark green), animated in/out through the exit door
     if robber_visible:
-        draw_person(robber_x, QUEUE_Y, ROBBER_COLOR)
+        draw_person(robber_x, robber_y, ROBBER_COLOR)
     if police_visible:
-        draw_person(police_x, QUEUE_Y, POLICE_COLOR)
+        draw_person(police_x, police_y, POLICE_COLOR)
 
     if game_state == STATE_CAKE_EATING:
+        draw_whipped_creams()
         # duel cakes (shrink as they're eaten) — left is the player's, right the robber's
         draw_cake("round", "chocolate", 1, None, -180, -100,
                   base_size=max(20, player_cake_amt * 0.8))
@@ -1690,6 +1878,7 @@ def showScreen():
 # ============================================================
 
 def main():
+    init_coins()
     init_customer_queue()
     begin_order_taking()
 
@@ -1705,8 +1894,10 @@ def main():
     glutMouseFunc(mouseListener)
     glutIdleFunc(idle)
 
+    show_custom_notification(story_lines[0], (0.9, 0.7, 0.2))
     glutMainLoop()
 
 
 if __name__ == "__main__":
+    
     main()
