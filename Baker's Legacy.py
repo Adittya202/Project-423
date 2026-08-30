@@ -12,7 +12,7 @@ import colorsys
 
 # ---- Whipped Cream System ----
 whipped_creams = []
-CREAM_SPEED = 8
+CREAM_SPEED = 6
 CREAM_SIZE = 20
 
 # ---- Notification System ----
@@ -113,7 +113,7 @@ order_handoff_timer = 0
 # register and the cake table ----
 PLAYER_REGISTER_POS = (-250.0, 0.0)
 PLAYER_TABLE_POS = (280.0, -20.0)
-PLAYER_SPEED = 1.2
+PLAYER_SPEED = 1.0
 player_x, player_y = PLAYER_REGISTER_POS
 player_target_x, player_target_y = PLAYER_REGISTER_POS
 
@@ -137,7 +137,7 @@ frame_count = 0
 # ---- robber event ----
 robber_timer = 0
 ROBBER_TIME_LIMIT = 3000  
-ROBBER_SPAWN_INTERVAL = 10  
+ROBBER_SPAWN_INTERVAL = 80 
 ROBBER_SPAWN_CHANCE = 0.01 
 
 # ---- rock paper scissors ----
@@ -172,7 +172,7 @@ CASHIER_COLOR = (0.35, 0.25, 0.15)    # pink
 # ---- customer queue  ----
 QUEUE_SLOTS_X = [-280, -450, -620, -790]
 QUEUE_Y = -280
-CUSTOMER_SPEED = 1.2
+CUSTOMER_SPEED = 1.0
 customer_queue = []     
 leaving_customers = []  
 ROBBER_STAND_Y = -100
@@ -247,8 +247,6 @@ def _cap_round(radius, z, color):
 
 
 def draw_cake(shape, flavor, tiers, topping, x, y, base_size=60, z_offset=0):
-    """Draws one cake using only glutSolidCube / gluCylinder / gluSphere.
-    z_offset lifts the whole cake up (e.g. to look like it's being carried)."""
     color = FLAVORS[flavor]
     glPushMatrix()
     glTranslatef(x, y, z_offset)
@@ -538,7 +536,7 @@ def draw_coins_3d():
     global animation_tick
     if paused:
         return
-    animation_tick += 0.2
+    animation_tick += 0.1
     for idx, c in enumerate(coins):
         if "pos" not in c and "x" in c and "y" in c:
             c["pos"] = [c["x"], c["y"], 30.0]
@@ -1063,9 +1061,9 @@ def throw_whipped_cream():
     angle = math.degrees(math.atan2(dy, dx))
     whipped_creams.append({
         'pos': [start_x, start_y, start_z],
-        'vx': 3.3,
-        'vy': -9.0,
-        'gravity': 0.28,
+        'vx': 2.6,
+        'vy': -7.0,
+        'gravity': 0.21,
         'angle': angle,
         'speed': 18,
         'target': [target_x, target_y, target_z],
@@ -1242,13 +1240,13 @@ def update_actors():
     global robber_x, robber_y, police_x, police_y, robber_target_y, police_target_y
 
     robber_x = _lerp_toward(robber_x, robber_target_x, 1.5)
-    robber_y = _lerp_toward(robber_y, robber_target_y, 2.5)
+    robber_y = _lerp_toward(robber_y, robber_target_y, 2.1)
     if robber_visible and robber_target_y <= EXIT_DOOR_Y - 80 and robber_y <= EXIT_DOOR_Y - 80:
         robber_visible = False
 
     if police_visible:
         police_x = _lerp_toward(police_x, police_target_x, 1.5)
-        police_y = _lerp_toward(police_y, police_target_y, 14)
+        police_y = _lerp_toward(police_y, police_target_y, 5)
         if police_visit_timer > 0:
             police_visit_timer -= 1
         else:
@@ -1802,8 +1800,8 @@ def idle():
         update_player()
 
         door_target = 0.0 if game_state == STATE_WIN else 1.0
-        door_anim = _lerp_toward(door_anim, door_target, 0.02)
-        exit_door_anim = _lerp_toward(exit_door_anim, door_target, 0.02)
+        door_anim = _lerp_toward(door_anim, door_target, 0.012)
+        exit_door_anim = _lerp_toward(exit_door_anim, door_target, 0.012)
  
         if notif_timer > 0 and not notif_persistent:
             notif_timer -= 1
@@ -1820,8 +1818,8 @@ def idle():
             show_notification("customer_line")      
 
         door_target = 0.0 if game_state == STATE_WIN else 1.0
-        door_anim = _lerp_toward(door_anim, door_target, 0.02)
-        exit_door_anim = _lerp_toward(exit_door_anim, door_target, 0.02)
+        door_anim = _lerp_toward(door_anim, door_target, 0.012)
+        exit_door_anim = _lerp_toward(exit_door_anim, door_target, 0.012)
 
         if notif_timer > 0 and not notif_persistent:
             notif_timer -= 1
@@ -1852,7 +1850,7 @@ def idle():
                 resolve_robber_timeout()
 
         elif game_state == STATE_CAKE_EATING:
-            robber_cake_amt -= 0.08 
+            robber_cake_amt -= 0.05
             if random.random() < 0.01:
                 player_cake_amt = min(160, player_cake_amt + 8)
             if player_cake_amt <= 0:
